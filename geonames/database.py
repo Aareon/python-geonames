@@ -136,30 +136,36 @@ async def database_exists(engine: AsyncEngine) -> bool:
     tables = await execute_query(engine, query)
     return len(tables) > 0
 
-async def check_database_update_needed(db_file: str, config: Config) -> bool:
+async def check_database_update_needed(config: Config) -> bool:
     """
     Check if the database needs to be updated based on the downloaded zip file.
 
     Args:
-        db_file (str): The path to the SQLite database file.
         config (Config): The configuration object.
 
     Returns:
         bool: True if an update is needed, False otherwise.
     """
-    if not await database_exists(db_file):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{config.DATABASE_FILEPATH}", echo=False)
+    
+    if not await database_exists(engine):
+        await engine.dispose()
         return True
 
     if not config.ZIP_FILE.exists():
+        await engine.dispose()
         return True
 
-    db_modification_time = os.path.getmtime(db_file)
+    db_modification_time = os.path.getmtime(config.DATABASE_FILEPATH)
     zip_modification_time = os.path.getmtime(config.ZIP_FILE)
 
     if zip_modification_time > db_modification_time:
+        await engine.dispose()
         return True
 
-    return await check_for_updates(config.URL, config.ZIP_FILE)
+    update_needed = await check_for_updates(config.URL, config.ZIP_FILE)
+    await engine.dispose()
+    return update_needed
 
 async def setup_database() -> AsyncEngine:
     """
@@ -171,12 +177,12 @@ async def setup_database() -> AsyncEngine:
     config = Config()
     engine = create_async_engine(f"sqlite+aiosqlite:///{config.DATABASE_FILEPATH}", echo=False)
 
-    if await check_database_update_needed(str(config.DATABASE_FILEPATH), config):
+    if await check_database_update_needed(config):
         if await check_for_updates(config.URL, config.ZIP_FILE):
             await download_zip(config.URL, config.ZIP_FILE)
             extract_zip(config.ZIP_FILE, config.SAVE_DIR)
 
-        engine = await create_database(str(config.DATABASE_FILEPATH))
+        await create_database(engine)
     
         df_chunks = load_data_in_chunks(config.TXT_FILE, config.CHUNK_SIZE)
         for chunk in df_chunks:
