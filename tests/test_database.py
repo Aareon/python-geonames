@@ -1,7 +1,9 @@
 import pytest
+from unittest.mock import patch
 from sqlalchemy.ext.asyncio import create_async_engine
-from geonames.database import create_database, bulk_insert_data, get_geolocation, database_exists
+from geonames.database import create_database, bulk_insert_data, get_geolocation, database_exists, setup_database
 from geonames.models import Base
+import zipfile
 
 @pytest.fixture
 async def test_engine():
@@ -15,6 +17,33 @@ async def test_engine():
 async def test_create_database(test_engine):
     await create_database(test_engine)
     assert await database_exists(test_engine)
+
+@pytest.mark.asyncio
+async def test_setup_database_file_not_found():
+    with patch('geonames.database.check_database_update_needed', return_value=True), \
+         patch('geonames.database.check_for_updates', return_value=True), \
+         patch('geonames.database.download_zip'), \
+         patch('geonames.database.extract_zip'), \
+         patch('pathlib.Path.exists', return_value=False):
+        with pytest.raises(FileNotFoundError):
+            await setup_database()
+
+@pytest.mark.asyncio
+async def test_setup_database_permission_error():
+    with patch('geonames.database.check_database_update_needed', return_value=True), \
+         patch('geonames.database.check_for_updates', return_value=True), \
+         patch('geonames.database.download_zip', side_effect=PermissionError):
+        with pytest.raises(PermissionError):
+            await setup_database()
+
+@pytest.mark.asyncio
+async def test_setup_database_bad_zip_file():
+    with patch('geonames.database.check_database_update_needed', return_value=True), \
+         patch('geonames.database.check_for_updates', return_value=True), \
+         patch('geonames.database.download_zip'), \
+         patch('geonames.database.extract_zip', side_effect=zipfile.BadZipFile):
+        with pytest.raises(zipfile.BadZipFile):
+            await setup_database()
 
 @pytest.mark.asyncio
 async def test_bulk_insert_data(test_engine):
