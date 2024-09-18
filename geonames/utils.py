@@ -1,12 +1,14 @@
-import aiohttp
-import aiofiles
 import zipfile
-from pathlib import Path
-from loguru import logger
-from typing import Dict, Any, List
-from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+from typing import Any, Dict, List
+
+import aiofiles
+import aiohttp
+from loguru import logger
 from tqdm.asyncio import tqdm
+
 
 async def download_zip(url: str, filename: Path) -> None:
     logger.info(f"Downloading {filename} from {url}")
@@ -22,19 +24,20 @@ async def download_zip(url: str, filename: Path) -> None:
                 logger.error(f"Access forbidden to {url}. Server returned 403 error.")
                 raise ValueError(f"Access forbidden to {url}")
             response.raise_for_status()
-            total_size = int(response.headers.get('content-length', 0))
+            total_size = int(response.headers.get("content-length", 0))
 
-            async with aiofiles.open(filename, mode='wb') as f:
+            async with aiofiles.open(filename, mode="wb") as f:
                 async for chunk in tqdm(
                     response.content.iter_chunked(8192),
                     total=total_size,
-                    unit='B',
+                    unit="B",
                     unit_scale=True,
-                    desc=f"Downloading {filename.name}"
+                    desc=f"Downloading {filename.name}",
                 ):
                     await f.write(chunk)
 
     logger.info(f"Downloaded {filename}")
+
 
 async def extract_zip(zip_filename: Path, extract_to: Path) -> List[str]:
     """
@@ -74,6 +77,7 @@ async def extract_zip(zip_filename: Path, extract_to: Path) -> List[str]:
     logger.info(f"Extracted files: {extracted_files}")
     return extracted_files
 
+
 async def check_for_updates(url: str, current_file: Path) -> bool:
     if not current_file.exists():
         return True
@@ -85,18 +89,23 @@ async def check_for_updates(url: str, current_file: Path) -> bool:
             remote_modified = response.headers.get("Last-Modified")
 
     local_size = current_file.stat().st_size
-    local_modified = datetime.fromtimestamp(current_file.stat().st_mtime, tz=timezone.utc)
+    local_modified = datetime.fromtimestamp(
+        current_file.stat().st_mtime, tz=timezone.utc
+    )
 
     if remote_size != local_size:
         return True
 
     if remote_modified:
         remote_modified_datetime = parsedate_to_datetime(remote_modified)
-        logger.debug(f"Remote modified: {remote_modified_datetime}, Local modified: {local_modified}")
+        logger.debug(
+            f"Remote modified: {remote_modified_datetime}, Local modified: {local_modified}"
+        )
         if remote_modified_datetime > local_modified:
             return True
 
     return False
+
 
 def get_column_info() -> Dict[str, Any]:
     """

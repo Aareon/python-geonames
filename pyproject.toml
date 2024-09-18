@@ -35,6 +35,10 @@ flake8 = "^3.9.2"
 pytest = "^8.3.3"
 pytest-asyncio = "^0.24.0"
 
+
+[tool.poetry.group.develop.dependencies]
+ruff = "^0.6.5"
+
 [tool.black]
 line-length = 100
 target-version = ['py310']

@@ -1,10 +1,15 @@
-import pandas as pd
 from pathlib import Path
-from typing import Iterator, Dict, Any
+from typing import Any, Dict, Iterator
+
+import pandas as pd
 from loguru import logger
+
 from geonames.utils import get_column_info
 
-def load_data_in_chunks(txt_filename: Path, chunksize: int = 200000) -> Iterator[pd.DataFrame]:
+
+def load_data_in_chunks(
+    txt_filename: Path, chunksize: int = 200000
+) -> Iterator[pd.DataFrame]:
     """
     Load data from a text file in chunks using pandas.
 
@@ -19,13 +24,13 @@ def load_data_in_chunks(txt_filename: Path, chunksize: int = 200000) -> Iterator
         FileNotFoundError: If the specified file does not exist.
     """
     logger.info(f"Loading data from {txt_filename} in chunks of {chunksize}")
-    
+
     if not txt_filename.exists():
         raise FileNotFoundError(f"File not found: {txt_filename}")
 
     column_info = get_column_info()
     columns, dtypes = zip(*column_info.items())
-    
+
     return pd.read_csv(
         txt_filename,
         sep="\t",
@@ -33,8 +38,9 @@ def load_data_in_chunks(txt_filename: Path, chunksize: int = 200000) -> Iterator
         names=columns,
         dtype=dict(zip(columns, dtypes)),
         chunksize=chunksize,
-        na_filter=False  # Treat empty fields as empty strings instead of NaN
+        na_filter=False,  # Treat empty fields as empty strings instead of NaN
     )
+
 
 def process_chunk(chunk: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -48,7 +54,9 @@ def process_chunk(chunk: pd.DataFrame) -> Dict[str, Any]:
     """
     required_columns = set(get_column_info().keys())
     if not required_columns.issubset(chunk.columns):
-        logger.warning(f"Missing columns in chunk: {required_columns - set(chunk.columns)}")
+        logger.warning(
+            f"Missing columns in chunk: {required_columns - set(chunk.columns)}"
+        )
         return []
-    
+
     return chunk.to_dict(orient="records")

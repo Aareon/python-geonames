@@ -3,6 +3,7 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
+
 class Geoname(Base):
     __tablename__ = "geonames"
     id = Column(Integer, primary_key=True, autoincrement=True)
