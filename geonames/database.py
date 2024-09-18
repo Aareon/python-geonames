@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import and_, func, select, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text, and_, func, select
 from typing import List, Dict, Any, Tuple, Callable
 from loguru import logger
 from geonames.models import Base, Geoname
@@ -8,6 +9,25 @@ from geonames.config import Config
 from geonames.utils import check_for_updates, download_zip, extract_zip
 from geonames.data_processing import load_data_in_chunks, process_chunk
 import os
+
+async def database_exists(engine: AsyncEngine) -> bool:
+    """
+    Check if the database exists and is populated.
+
+    Args:
+        engine (AsyncEngine): The SQLAlchemy async engine.
+
+    Returns:
+        bool: True if the database exists and is populated, False otherwise.
+    """
+    try:
+        async with engine.connect() as conn:
+            # Use text() to create a SQL expression
+            result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='geonames'"))
+            return result.scalar() is not None
+    except SQLAlchemyError as e:
+        logger.error(f"Error checking database existence: {e}")
+        return False
 
 async def create_async_session(engine: AsyncEngine) -> AsyncSession:
     """
@@ -34,14 +54,17 @@ async def execute_query(engine: AsyncEngine, query: Callable, *args, **kwargs) -
 
     Returns:
         Any: The result of the query execution.
+
+    Raises:
+        SQLAlchemyError: If there's an error executing the query.
     """
     async with await create_async_session(engine) as session:
         try:
             result = await query(session, *args, **kwargs)
             return result
-        except Exception as e:
+        except SQLAlchemyError as e:
             logger.error(f"Error executing query: {e}")
-            raise
+            raise SQLAlchemyError(f"Database query failed: {str(e)}")
 
 async def create_database(engine: AsyncEngine) -> None:
     """
@@ -119,23 +142,6 @@ async def get_geolocation(engine: AsyncEngine, country: str, zipcode: str) -> Li
         for geoname in geonames
     ]
 
-async def database_exists(engine: AsyncEngine) -> bool:
-    """
-    Check if the database exists and is populated.
-
-    Args:
-        engine (AsyncEngine): The SQLAlchemy async engine.
-
-    Returns:
-        bool: True if the database exists and is populated, False otherwise.
-    """
-    async def query(session):
-        result = await session.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='geonames'"))
-        return result.fetchall()
-
-    tables = await execute_query(engine, query)
-    return len(tables) > 0
-
 async def check_database_update_needed(config: Config) -> bool:
     """
     Check if the database needs to be updated based on the downloaded zip file.
@@ -175,6 +181,10 @@ async def setup_database() -> AsyncEngine:
         AsyncEngine: An async SQLAlchemy engine for the set up database.
     """
     config = Config()
+    
+    # Create the SAVE_DIR if it doesn't exist
+    config.SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    
     engine = create_async_engine(f"sqlite+aiosqlite:///{config.DATABASE_FILEPATH}", echo=False)
 
     if await check_database_update_needed(config):
@@ -195,19 +205,8 @@ async def setup_database() -> AsyncEngine:
 
     return engine
 
-async def search_locations(db_file: str, query_func: Callable, *args) -> List[Dict[str, Any]]:
-    """
-    Generic search function for locations in the database.
-
-    Args:
-        db_file (str): The path to the SQLite database file.
-        query_func (Callable): The query function to execute.
-        *args: Additional arguments for the query function.
-
-    Returns:
-        List[Dict[str, Any]]: A list of dictionaries containing location data.
-    """
-    geonames = await execute_query(db_file, query_func, *args)
+async def search_locations(engine: AsyncEngine, query_func: Callable, *args) -> List[Dict[str, Any]]:
+    geonames = await execute_query(engine, query_func, *args)
     return [
         {
             "name": geoname.place_name,
@@ -218,24 +217,14 @@ async def search_locations(db_file: str, query_func: Callable, *args) -> List[Di
         for geoname in geonames
     ]
 
-async def search_by_name(db_file: str, name: str) -> List[Dict[str, Any]]:
-    """
-    Search for locations in the database by name.
-
-    Args:
-        db_file (str): The path to the SQLite database file.
-        name (str): The name to search for.
-
-    Returns:
-        List[Dict[str, Any]]: A list of dictionaries containing location data.
-    """
+async def search_by_name(engine: AsyncEngine, name: str) -> List[Dict[str, Any]]:
     async def query(session, name):
         result = await session.execute(
             select(Geoname).where(Geoname.place_name.ilike(f"%{name}%"))
         )
         return result.scalars().all()
 
-    return await search_locations(db_file, query, name)
+    return await search_locations(engine, query, name)
 
 async def search_by_postal_code(db_file: str, country_code: str, postal_code: str) -> List[Dict[str, Any]]:
     """
@@ -309,49 +298,21 @@ async def search_by_coordinates(db_file: str, lat: float, lon: float, radius: fl
 
     return await search_locations(db_file, query, lat, lon, radius)
 
-async def get_total_entries(db_file: str) -> int:
-    """
-    Get the total number of entries in the database.
-
-    Args:
-        db_file (str): The path to the SQLite database file.
-
-    Returns:
-        int: The total number of entries.
-    """
+async def get_total_entries(engine: AsyncEngine) -> int:
     async def query(session):
         result = await session.execute(select(func.count()).select_from(Geoname))
         return result.scalar_one()
 
-    return await execute_query(db_file, query)
+    return await execute_query(engine, query)
 
-async def get_country_count(db_file: str) -> int:
-    """
-    Get the number of unique countries in the database.
-
-    Args:
-        db_file (str): The path to the SQLite database file.
-
-    Returns:
-        int: The number of unique countries.
-    """
+async def get_country_count(engine: AsyncEngine) -> int:
     async def query(session):
         result = await session.execute(select(func.count(Geoname.country_code.distinct())))
         return result.scalar_one()
 
-    return await execute_query(db_file, query)
+    return await execute_query(engine, query)
 
-async def get_top_countries(db_file: str, limit: int = 5) -> List[Tuple[str, int]]:
-    """
-    Get the top countries by number of entries.
-
-    Args:
-        db_file (str): The path to the SQLite database file.
-        limit (int): The number of top countries to return.
-
-    Returns:
-        List[Tuple[str, int]]: A list of tuples containing country code and count.
-    """
+async def get_top_countries(engine: AsyncEngine, limit: int = 5) -> List[Tuple[str, int]]:
     async def query(session, limit):
         result = await session.execute(
             select(Geoname.country_code, func.count(Geoname.country_code))
@@ -361,4 +322,4 @@ async def get_top_countries(db_file: str, limit: int = 5) -> List[Tuple[str, int
         )
         return result.all()
 
-    return await execute_query(db_file, query, limit)
+    return await execute_query(engine, query, limit)
