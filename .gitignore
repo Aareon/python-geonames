@@ -163,3 +163,8 @@ cython_debug/
 
 # GeoName data
 data/
+allCountries.txt
+
+# Test stuff
+non_existent.zip
+test_input.zip
