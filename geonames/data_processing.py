@@ -32,7 +32,8 @@ def load_data_in_chunks(txt_filename: Path, chunksize: int = 200000) -> Iterator
         header=None,
         names=columns,
         dtype=dict(zip(columns, dtypes)),
-        chunksize=chunksize
+        chunksize=chunksize,
+        na_filter=False  # Treat empty fields as empty strings instead of NaN
     )
 
 def process_chunk(chunk: pd.DataFrame) -> Dict[str, Any]:
@@ -45,4 +46,9 @@ def process_chunk(chunk: pd.DataFrame) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: A dictionary containing the processed data ready for database insertion.
     """
+    required_columns = set(get_column_info().keys())
+    if not required_columns.issubset(chunk.columns):
+        logger.warning(f"Missing columns in chunk: {required_columns - set(chunk.columns)}")
+        return []
+    
     return chunk.to_dict(orient="records")
