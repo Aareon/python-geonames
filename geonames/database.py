@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import inspect
 from sqlalchemy import text, and_, func, select
 from typing import List, Dict, Any, Tuple, Callable
 from loguru import logger
@@ -9,6 +10,7 @@ from geonames.config import Config
 from geonames.utils import check_for_updates, download_zip, extract_zip
 from geonames.data_processing import load_data_in_chunks, process_chunk
 import os
+import zipfile
 
 async def database_exists(engine: AsyncEngine) -> bool:
     """
@@ -19,15 +21,16 @@ async def database_exists(engine: AsyncEngine) -> bool:
 
     Returns:
         bool: True if the database exists and is populated, False otherwise.
+
+    Raises:
+        SQLAlchemyError: If there's an error checking the database existence.
     """
     try:
         async with engine.connect() as conn:
-            # Use text() to create a SQL expression
-            result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='geonames'"))
-            return result.scalar() is not None
+            return await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table("geonames"))
     except SQLAlchemyError as e:
         logger.error(f"Error checking database existence: {e}")
-        return False
+        raise
 
 async def create_async_session(engine: AsyncEngine) -> AsyncSession:
     """
@@ -179,21 +182,25 @@ async def setup_database() -> AsyncEngine:
 
     Returns:
         AsyncEngine: An async SQLAlchemy engine for the set up database.
+
+    Raises:
+        FileNotFoundError: If the required files are not found after download and extraction.
+        zipfile.BadZipFile: If the downloaded zip file is corrupted.
+        PermissionError: If there are insufficient permissions to write files.
     """
     config = Config()
-    
-    # Create the SAVE_DIR if it doesn't exist
     config.SAVE_DIR.mkdir(parents=True, exist_ok=True)
     
     engine = create_async_engine(f"sqlite+aiosqlite:///{config.DATABASE_FILEPATH}", echo=False)
 
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     if await check_database_update_needed(config):
         if await check_for_updates(config.URL, config.ZIP_FILE):
             await download_zip(config.URL, config.ZIP_FILE)
-            extract_zip(config.ZIP_FILE, config.SAVE_DIR)
+            await extract_zip(config.ZIP_FILE, config.SAVE_DIR)
 
-        await create_database(engine)
-    
         df_chunks = load_data_in_chunks(config.TXT_FILE, config.CHUNK_SIZE)
         for chunk in df_chunks:
             data = process_chunk(chunk)
