@@ -44,7 +44,7 @@ poetry run pytest
 To format code:
 
 ```
-poetry run black .
+poetry run ruff .
 poetry run isort .
 ```
 
