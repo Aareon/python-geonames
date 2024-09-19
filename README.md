@@ -57,4 +57,3 @@ poetry run mypy .
 ## License
 
 This project is licensed under the MIT License. The GeoNames data is licensed under a [Creative Commons Attribution 4.0 License](https://creativecommons.org/licenses/by/4.0/).
-```
