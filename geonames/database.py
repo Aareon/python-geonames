@@ -1,5 +1,5 @@
 import os
-from typing import List, Iterator, Tuple, Any, TypeVar, Callable, Coroutine, Dict, AsyncIterator
+from typing import List, Iterator, Tuple, Any, TypeVar, Callable, Dict, Iterable
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine, AsyncResult
 from sqlalchemy import and_, func, inspect, select, text, insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -42,20 +42,22 @@ async def create_async_session(engine: AsyncEngine) -> AsyncSession:
     return async_session()
 
 
-async def execute_query(engine: AsyncEngine, query_func: Callable[..., Coroutine[Any, Any, T]], *args: Any, **kwargs: Any) -> T:
+async def execute_query(engine, query_func, *args, **kwargs):
     async with await create_async_session(engine) as session:
         try:
-            # Await the stream() method
-            stream = await session.stream(select(func.count()).select_from(Geoname))
-            async with stream as result:
-                query_result = await query_func(result, *args, **kwargs)
-                logger.debug(f"Query function returned: {query_result}")
-                return query_result
-        except SQLAlchemyError as e:
-            logger.error(f"Error executing query: {e}")
-            raise SQLAlchemyError(f"Database query failed: {str(e)}")
+            logger.debug("Starting query execution")
+            result = await query_func(session, *args, **kwargs)
+            if hasattr(result, 'scalars'):
+                scalars_result = await result.scalars()
+                return [item async for item in scalars_result]
+            if hasattr(result, 'all'):
+                all_result = await result.all()
+                return all_result
+            if isinstance(result, list):
+                return result
+            return [result] if result is not None else []
         except Exception as e:
-            logger.error(f"Unexpected error in execute_query: {e}")
+            logger.error(f"Error in execute_query: {e}")
             raise
 
 
@@ -234,27 +236,31 @@ async def search_by_name(engine: AsyncEngine, name: str) -> List[Dict[str, Any]]
     ]
 
 
-async def search_by_postal_code_query(session: AsyncSession, country_code: str, postal_code: str) -> List[Geoname]:
-    logger.debug(f"Executing query for postal code {postal_code} in country {country_code}")
+async def search_by_postal_code_query(session: AsyncSession, country_code: str, postal_code: str):
     result = await session.execute(
         select(Geoname).where(
             and_(
                 Geoname.country_code == country_code,
-                Geoname.postal_code == postal_code,
+                Geoname.postal_code == postal_code
             )
         )
     )
-    geonames = list(result.scalars().all())
-    logger.debug(f"Query returned {len(geonames)} results")
-    return geonames
+    return result.scalars().all()  # Return the result directly
 
 async def search_by_postal_code(
     engine: AsyncEngine, country_code: str, postal_code: str
 ) -> List[Dict[str, Any]]:
     logger.debug(f"Searching for postal code {postal_code} in country {country_code}")
-    result = await search_locations(engine, search_by_postal_code_query, country_code, postal_code)
-    logger.debug(f"Search result: {result}")
-    return result
+    geonames = await execute_query(engine, search_by_postal_code_query, country_code, postal_code)
+    return [
+        {
+            "name": geoname.place_name,
+            "country": geoname.country_code,
+            "latitude": geoname.latitude,
+            "longitude": geoname.longitude,
+        }
+        for geoname in geonames
+    ]
 
 
 async def search_by_country_code(
@@ -291,15 +297,14 @@ async def search_by_coordinates(
     return await search_locations(engine, query, lat, lon, radius)
 
 
-async def get_total_entries_query(result: AsyncIterator[Any]) -> int:
+async def get_total_entries_query(result: AsyncResult) -> int:
     async for row in result:
-        logger.debug(f"Row from get_total_entries_query: {row}")
         return row[0]
-    logger.warning("No results found in get_total_entries_query")
-    return 0  # Return 0 if no results
+    return 0
 
 async def get_total_entries(engine: AsyncEngine) -> int:
-    return await execute_query(engine, get_total_entries_query)
+    query = select(func.count()).select_from(Geoname)
+    return await execute_query(engine, query, get_total_entries_query)
 
 
 async def get_country_count_query(session: AsyncSession) -> int:
