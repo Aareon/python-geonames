@@ -1,7 +1,7 @@
 import os
-from typing import List, Iterator, Tuple, Any, TypeVar, Callable, Dict, Iterable
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, TypeVar, Union, Sequence, Iterator, Protocol, Generic, cast
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine, AsyncResult
-from sqlalchemy import and_, func, inspect, select, text, insert
+from sqlalchemy import and_, func, inspect, select, text, insert, Result, Row
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timezone
 from loguru import logger
@@ -12,6 +12,10 @@ from geonames.data_processing import load_data_in_chunks, process_chunk
 from geonames.utils import check_for_updates, download_zip, extract_zip
 
 T = TypeVar('T')
+T_co = TypeVar('T_co', covariant=True)
+
+class QueryProtocol(Protocol[T_co]):
+    async def __call__(self, session: AsyncSession, *args: Any) -> T_co: ...
 
 
 async def database_exists(engine: AsyncEngine) -> bool:
@@ -42,11 +46,15 @@ async def create_async_session(engine: AsyncEngine) -> AsyncSession:
     return async_session()
 
 
-async def execute_query(engine, query_func, *args, **kwargs):
+async def execute_query(
+    engine: AsyncEngine,
+    query_func: Callable[[AsyncSession, Any], Coroutine[Any, Any, T]],
+    *args: Any,
+) -> T:
     async with await create_async_session(engine) as session:
         try:
             logger.debug("Starting query execution")
-            result = await query_func(session, *args, **kwargs)
+            result = await query_func(session, *args)
             return result
         except Exception as e:
             logger.error(f"Error in execute_query: {e}")
@@ -87,17 +95,25 @@ async def optimize_database(engine: AsyncEngine) -> None:
         await conn.execute(text("PRAGMA optimize"))
 
 
-async def get_geolocation_query(session: AsyncSession, country: str, zipcode: str) -> Iterator[Geoname]:
+async def get_geolocation_query(session: AsyncSession, country: str, zipcode: str) -> List[Geoname]:
     result = await session.execute(
         select(Geoname).where(
             and_(Geoname.postal_code == zipcode, Geoname.country_code == country)
         )
     )
-    return iter(result.scalars().all())
-
+    return list(result.scalars().all())
 
 async def get_geolocation(engine: AsyncEngine, country: str, zipcode: str) -> List[Dict[str, Any]]:
-    geonames = await execute_query(engine, get_geolocation_query, country, zipcode)
+    async def query(session: AsyncSession, args: Tuple[str, str]) -> List[Geoname]:
+        c, z = args
+        result = await session.execute(
+            select(Geoname).where(
+                and_(Geoname.postal_code == z, Geoname.country_code == c)
+            )
+        )
+        return list(result.scalars().all())
+
+    geonames: List[Geoname] = await execute_query(engine, query, (country, zipcode))
     return [
         {
             "latitude": geoname.latitude,
@@ -210,13 +226,13 @@ async def search_locations(
 
 
 async def search_by_name(engine: AsyncEngine, name: str) -> List[Dict[str, Any]]:
-    async def query(session: AsyncSession, name: str) -> List[Geoname]:
+    async def query(session: AsyncSession, n: str) -> List[Geoname]:
         result = await session.execute(
-            select(Geoname).where(Geoname.place_name.ilike(f"%{name}%"))
+            select(Geoname).where(Geoname.place_name.ilike(f"%{n}%"))
         )
         return list(result.scalars().all())
 
-    geonames = await execute_query(engine, query, name)
+    geonames: List[Geoname] = await execute_query(engine, query, name)
     return [
         {
             "name": geoname.place_name,
@@ -228,7 +244,7 @@ async def search_by_name(engine: AsyncEngine, name: str) -> List[Dict[str, Any]]
     ]
 
 
-async def search_by_postal_code_query(session: AsyncSession, country_code: str, postal_code: str):
+async def search_by_postal_code_query(session: AsyncSession, country_code: str, postal_code: str) -> List[Geoname]:
     result = await session.execute(
         select(Geoname).where(
             and_(
@@ -237,13 +253,24 @@ async def search_by_postal_code_query(session: AsyncSession, country_code: str, 
             )
         )
     )
-    return result.scalars().all()  # Return the result directly
+    return list(result.scalars().all())  # Return the result directly
 
 async def search_by_postal_code(
     engine: AsyncEngine, country_code: str, postal_code: str
 ) -> List[Dict[str, Any]]:
-    logger.debug(f"Searching for postal code {postal_code} in country {country_code}")
-    geonames = await execute_query(engine, search_by_postal_code_query, country_code, postal_code)
+    async def query(session: AsyncSession, args: Tuple[str, str]) -> List[Geoname]:
+        cc, pc = args
+        result = await session.execute(
+            select(Geoname).where(
+                and_(
+                    Geoname.country_code == cc,
+                    Geoname.postal_code == pc
+                )
+            )
+        )
+        return list(result.scalars().all())
+
+    geonames: List[Geoname] = await execute_query(engine, query, (country_code, postal_code))
     return [
         {
             "name": geoname.place_name,
@@ -258,13 +285,22 @@ async def search_by_postal_code(
 async def search_by_country_code(
     engine: AsyncEngine, country_code: str
 ) -> List[Dict[str, Any]]:
-    async def query(session: AsyncSession, country_code: str) -> List[Geoname]:
+    async def query(session: AsyncSession, cc: str) -> List[Geoname]:
         result = await session.execute(
-            select(Geoname).where(Geoname.country_code == country_code).limit(100)
+            select(Geoname).where(Geoname.country_code == cc).limit(100)
         )
         return list(result.scalars().all())
 
-    return await search_locations(engine, query, country_code)
+    geonames: List[Geoname] = await execute_query(engine, query, country_code)
+    return [
+        {
+            "name": geoname.place_name,
+            "country": geoname.country_code,
+            "latitude": geoname.latitude,
+            "longitude": geoname.longitude,
+        }
+        for geoname in geonames
+    ]
 
 
 async def search_by_coordinates(
@@ -289,24 +325,31 @@ async def search_by_coordinates(
     return await search_locations(engine, query, lat, lon, radius)
 
 
-async def get_total_entries_query(result: AsyncResult) -> int:
-    async for row in result:
-        return row[0]
-    return 0
+async def get_total_entries_query(result: Union[AsyncResult[Tuple[int]], Result[Tuple[int]]]) -> Optional[int]:
+    if isinstance(result, AsyncResult):
+        async for row in result:
+            return row[0] if row else None
+    else:
+        first_row: Optional[Row[Tuple[int]]] = result.first()
+        return first_row[0] if first_row else None
+    return None
 
 async def get_total_entries(engine: AsyncEngine) -> int:
-    query = select(func.count()).select_from(Geoname)
-    return await execute_query(engine, query, get_total_entries_query)
+    async def query(session: AsyncSession, _: Any) -> int:
+        result = await session.execute(select(func.count()).select_from(Geoname))
+        return result.scalar_one()
 
+    return await execute_query(engine, query, None)
 
-async def get_country_count_query(session: AsyncSession) -> int:
-    result = await session.execute(
-        select(func.count(Geoname.country_code.distinct()))
-    )
-    return result.scalar_one()
 
 async def get_country_count(engine: AsyncEngine) -> int:
-    return await execute_query(engine, get_country_count_query)
+    async def query(session: AsyncSession, _: Any) -> int:
+        result = await session.execute(
+            select(func.count(Geoname.country_code.distinct()))
+        )
+        return int(result.scalar_one())
+
+    return await execute_query(engine, query, None)
 
 async def get_top_countries_query(session: AsyncSession, limit: int) -> List[Tuple[str, int]]:
     result = await session.execute(
@@ -318,4 +361,13 @@ async def get_top_countries_query(session: AsyncSession, limit: int) -> List[Tup
     return [(row[0], row[1]) for row in result.all()]
 
 async def get_top_countries(engine: AsyncEngine, limit: int = 5) -> List[Tuple[str, int]]:
-    return await execute_query(engine, get_top_countries_query, limit)
+    async def query(session: AsyncSession, l: Any) -> List[Tuple[str, int]]:
+        result = await session.execute(
+            select(Geoname.country_code, func.count(Geoname.country_code))
+            .group_by(Geoname.country_code)
+            .order_by(func.count(Geoname.country_code).desc())
+            .limit(l)
+        )
+        return [(str(row[0]), int(row[1])) for row in result.all()]
+
+    return await execute_query(engine, query, limit)

@@ -1,10 +1,10 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, create_autospec
 
 import pytest
 from loguru import logger
 from sqlalchemy import Table, Insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from pathlib import Path
 
 from geonames.config import Config
@@ -117,7 +117,6 @@ async def test_check_database_update_needed():
         mock_db_exists.assert_awaited_once_with(mock_engine)
         mock_check_updates.assert_awaited_once_with(config.URL, config.ZIP_FILE)
         await mock_engine.dispose()  # Ensure we're awaiting the dispose method
-
 
 @pytest.mark.asyncio
 async def test_database_exists(mock_engine):
@@ -339,14 +338,33 @@ async def test_search_by_postal_code(mock_engine):
 
 
 @pytest.mark.asyncio
-async def test_search_by_country_code(mock_engine):
-    mock_result = [
-        Geoname(place_name="Test City", country_code="US", latitude=1.0, longitude=1.0)
+async def test_search_by_country_code():
+    # Mock the AsyncEngine
+    mock_engine = AsyncMock(spec=AsyncEngine)
+
+    # Mock the execute_query function
+    mock_geonames = [
+        Geoname(place_name="City1", country_code="US", latitude=1.0, longitude=1.0),
+        Geoname(place_name="City2", country_code="US", latitude=2.0, longitude=2.0),
     ]
-    with patch("geonames.database.execute_query", return_value=mock_result):
+
+    with patch('geonames.database.execute_query', return_value=mock_geonames):
         result = await search_by_country_code(mock_engine, "US")
-        assert len(result) == 1
-        assert result[0]["country"] == "US"
+
+    # Check the result
+    assert len(result) == 2
+    assert result[0] == {
+        "name": "City1",
+        "country": "US",
+        "latitude": 1.0,
+        "longitude": 1.0,
+    }
+    assert result[1] == {
+        "name": "City2",
+        "country": "US",
+        "latitude": 2.0,
+        "longitude": 2.0,
+    }
 
 
 @pytest.mark.asyncio
