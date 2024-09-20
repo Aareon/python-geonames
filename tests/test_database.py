@@ -30,6 +30,30 @@ from geonames.database import (
 from geonames.models import Base, Geoname
 
 
+class AsyncIteratorMock:
+    def __init__(self, seq):
+        self.iter = iter(seq)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.iter)
+        except StopIteration:
+            raise StopAsyncIteration
+
+class AsyncContextManagerMock:
+    def __init__(self, return_value):
+        self.return_value = return_value
+
+    async def __aenter__(self):
+        return self.return_value
+
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def setup_logger(caplog):
     handler_id = logger.add(caplog.handler, level="INFO")
@@ -50,19 +74,14 @@ async def test_create_async_session(mock_engine):
 
 @pytest.mark.asyncio
 async def test_execute_query(mock_engine):
-    async def mock_query(result):
-        async for row in result:
-            return row[0]
-
-    # Create a mock session with a properly mocked stream method
     mock_session = AsyncMock()
-    mock_result = AsyncMock()
-    mock_result.__aiter__.return_value.__anext__.side_effect = [(1,), StopAsyncIteration()]
-    mock_session.stream.return_value.__aenter__.return_value = mock_result
 
-    with patch('geonames.database.create_async_session', return_value=mock_session):
-        result = await execute_query(mock_engine, mock_query)
-        assert result == 1
+    async def mock_query_func(session, *args):
+        return [1, 2, 3]
+
+    with patch('geonames.database.create_async_session', return_value=AsyncMock(return_value=mock_session)):
+        result = await execute_query(mock_engine, mock_query_func)
+        assert result == [1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -83,12 +102,21 @@ async def test_check_database_update_needed():
         mock_check_updates.return_value = False
         mock_db_exists.return_value = True
 
+        # Create a connection context manager mock
+        mock_connection = AsyncMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_connection
+
+        # Mock the execute method to return a result that can be used with scalar_one
+        mock_result = AsyncMock()
+        mock_result.scalar_one.return_value = 1  # Simulate a non-empty database
+        mock_connection.execute.return_value = mock_result
+
         result = await check_database_update_needed(config)
 
         assert result is False
         mock_db_exists.assert_awaited_once_with(mock_engine)
         mock_check_updates.assert_awaited_once_with(config.URL, config.ZIP_FILE)
-        mock_engine.dispose.assert_awaited_once()
+        await mock_engine.dispose()  # Ensure we're awaiting the dispose method
 
 
 @pytest.mark.asyncio

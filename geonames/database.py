@@ -47,15 +47,7 @@ async def execute_query(engine, query_func, *args, **kwargs):
         try:
             logger.debug("Starting query execution")
             result = await query_func(session, *args, **kwargs)
-            if hasattr(result, 'scalars'):
-                scalars_result = await result.scalars()
-                return [item async for item in scalars_result]
-            if hasattr(result, 'all'):
-                all_result = await result.all()
-                return all_result
-            if isinstance(result, list):
-                return result
-            return [result] if result is not None else []
+            return result
         except Exception as e:
             logger.error(f"Error in execute_query: {e}")
             raise
@@ -135,7 +127,7 @@ async def check_database_update_needed(config: Config) -> bool:
 
         async with engine.connect() as conn:
             result = await conn.execute(text("SELECT COUNT(*) FROM geonames"))
-            count = result.scalar_one()
+            count = await result.scalar_one()
             if count == 0:
                 logger.debug("Database is empty. Update needed.")
                 return True
