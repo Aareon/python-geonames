@@ -1,8 +1,8 @@
 from sqlalchemy import Column, Float, Integer, String
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
-Base = declarative_base()
-
+class Base(DeclarativeBase):
+    pass
 
 class Geoname(Base):
     __tablename__ = "geonames"

@@ -4,8 +4,7 @@ from unittest.mock import mock_open, patch
 import pandas as pd
 import pytest
 
-from geonames.data_processing import load_data_in_chunks, process_chunk
-from geonames.utils import get_column_info
+from geonames.data_processing import load_data_in_chunks, process_chunk, get_column_info
 
 
 @pytest.fixture

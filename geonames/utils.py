@@ -105,26 +105,3 @@ async def check_for_updates(url: str, current_file: Path) -> bool:
             return True
 
     return False
-
-
-def get_column_info() -> Dict[str, Any]:
-    """
-    Get the column information for the geonames database.
-
-    Returns:
-        Dict[str, Any]: A dictionary containing column names and their data types.
-    """
-    return {
-        "country_code": str,
-        "postal_code": str,
-        "place_name": str,
-        "admin_name1": str,
-        "admin_code1": str,
-        "admin_name2": str,
-        "admin_code2": str,
-        "admin_name3": str,
-        "admin_code3": str,
-        "latitude": float,
-        "longitude": float,
-        "accuracy": float,
-    }

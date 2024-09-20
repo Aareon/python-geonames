@@ -16,28 +16,26 @@ loguru = "^0.7.2"
 pandas = "^2.2.2"
 aiohttp = "^3.10.5"
 aiofiles = "^24.1.0"
-pytest-aiohttp = "^1.0.5"
-pytest-mock = "^3.14.0"
-pytest-asyncio = "^0.24.0"
 aioresponses = "^0.7.6"
 click = "^8.1.7"
 aiosqlite = "^0.20.0"
 tqdm = "^4.66.5"
-
-[tool.poetry.dev-dependencies]
-pytest = "^8.3.3"
-black = "^21.5b1"
-isort = "^5.8.0"
-mypy = "^0.910"
-flake8 = "^3.9.2"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.3.3"
-pytest-asyncio = "^0.24.0"
-
+numpy = "^2.1.1"
 
 [tool.poetry.group.develop.dependencies]
 ruff = "^0.6.5"
+mypy = "^1.11.2"
+isort = "^5.13.2"
+flake8 = "^7.1.1"
+
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.3"
+pytest-asyncio = "^0.24.0"
+pytest-cov = "^5.0.0"
+pytest-mock = "^3.14.0"
+pytest-aiohttp = "^1.0.5"
+aioresponses = "^0.7.6"
 
 [tool.black]
 line-length = 100
@@ -47,13 +45,36 @@ target-version = ['py310']
 profile = "black"
 line_length = 100
 
-[tool.mypy]
-ignore_missing_imports = true
-strict_optional = true
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 geonames-cli = "geonames.cli:cli"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = [
+    "sqlalchemy.*",
+    "loguru.*",
+    "pandas.*",
+    "aiohttp.*",
+    "aiofiles.*",
+    "tqdm.*",
+    "click.*",
+    "dotenv.*"
+]
+ignore_missing_imports = true

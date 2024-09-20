@@ -1,7 +1,8 @@
 import asyncio
-import os
 import zipfile
 from pathlib import Path
+from typing import Any, Callable, Optional, List, Dict
+import sys
 
 import aiohttp
 import click
@@ -13,8 +14,8 @@ from geonames.config import Config
 from geonames.utils import check_for_updates, download_zip, extract_zip
 
 
-def sync_wrapper(func):
-    def wrapper(*args, **kwargs):
+def sync_wrapper(func: Callable[..., Any]) -> Callable[..., Any]:
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         if asyncio.iscoroutinefunction(func):
             return asyncio.run(func(*args, **kwargs))
         return func(*args, **kwargs)
@@ -23,7 +24,7 @@ def sync_wrapper(func):
 
 
 @click.group()
-def cli():
+def cli() -> None:
     """GeoNames CLI for managing and querying geographical data."""
     pass
 
@@ -35,8 +36,13 @@ def cli():
 @click.option(
     "--db-file", default="data/geonames.db", help="Path to the SQLite database file"
 )
-def import_data(input_file, db_file):
+@click.option("--debug", is_flag=True, help="Enable debug logging")
+def import_data(input_file: str, db_file: str, debug: bool) -> None:
     """Import data from the input file into the SQLite database."""
+    if debug:
+        logger.remove()
+        logger.add(sys.stderr, level="DEBUG")
+
     click.echo(f"Importing data from {input_file} into {db_file}")
     try:
         config = Config()
@@ -44,16 +50,14 @@ def import_data(input_file, db_file):
         config.DATABASE_FILEPATH = Path(db_file).resolve()
         config.ZIP_FILE = config.TXT_FILE.with_suffix(".zip")
 
-        async def import_data_async():
+        async def import_data_async() -> None:
             if not config.TXT_FILE.exists():
-                click.echo("Input file not found. Attempting to download...")
+                logger.debug("Input file not found. Attempting to download...")
                 try:
                     if await check_for_updates(config.URL, config.ZIP_FILE):
                         await download_zip(config.URL, config.ZIP_FILE)
 
-                    click.echo(
-                        f"Extracting {config.ZIP_FILE} to {config.TXT_FILE.parent}"
-                    )
+                    logger.debug(f"Extracting {config.ZIP_FILE} to {config.TXT_FILE.parent}")
                     extracted_files = await extract_zip(
                         config.ZIP_FILE, config.TXT_FILE.parent
                     )
@@ -63,33 +67,28 @@ def import_data(input_file, db_file):
                             f"No files were extracted from {config.ZIP_FILE}"
                         )
 
-                    # Find the first .txt file in the extracted files
                     txt_file = next(
                         (f for f in extracted_files if f.endswith(".txt")), None
                     )
                     if txt_file:
                         config.TXT_FILE = config.TXT_FILE.parent / txt_file
-                        click.echo(f"Using extracted file: {config.TXT_FILE}")
+                        logger.debug(f"Using extracted file: {config.TXT_FILE}")
                     else:
                         raise FileNotFoundError(
                             f"No .txt file found in extracted files. Extracted files: {extracted_files}"
                         )
 
-                except aiohttp.ClientError as e:
-                    raise Exception(f"Failed to download the file: {str(e)}")
-                except zipfile.BadZipFile:
-                    raise Exception(
-                        f"The downloaded file {config.ZIP_FILE} is not a valid zip file."
-                    )
                 except Exception as e:
-                    raise Exception(f"Error during download or extraction: {str(e)}")
+                    logger.exception("Error during download or extraction")
+                    raise
 
-            click.echo("Setting up database...")
-            engine = await database.setup_database()
+            logger.debug("Setting up database...")
+            engine = await database.setup_database(config)
 
             total_entries = await database.get_total_entries(engine)
             country_count = await database.get_country_count(engine)
 
+            logger.debug("Data import completed successfully.")
             click.echo("Data import completed successfully.")
             click.echo(f"Total entries in database: {total_entries}")
             click.echo(f"Number of countries: {country_count}")
@@ -97,19 +96,6 @@ def import_data(input_file, db_file):
             await engine.dispose()
 
         asyncio.run(import_data_async())
-    except FileNotFoundError as e:
-        click.echo(f"Error: {str(e)}")
-        click.echo(f"Current working directory: {Path.cwd()}")
-        click.echo(f"ZIP file exists: {config.ZIP_FILE.exists()}")
-        click.echo(
-            f"ZIP file size: {config.ZIP_FILE.stat().st_size if config.ZIP_FILE.exists() else 'N/A'}"
-        )
-        click.echo(f"Extract directory contents: {os.listdir(config.TXT_FILE.parent)}")
-        click.echo(
-            "Please ensure the input file exists at the specified path or check your internet connection."
-        )
-    except PermissionError as e:
-        click.echo(f"Error: Permission denied. {str(e)}")
     except Exception as e:
         logger.exception("Error during data import")
         click.echo(f"Error during data import: {str(e)}")
@@ -130,8 +116,22 @@ def import_data(input_file, db_file):
     default=10.0,
     help="Search radius in km for coordinate search",
 )
-def search(db_file, name, postal_code, country_code, lat, lon, radius):
+@click.option("--debug", is_flag=True, help="Enable debug logging")
+def search(
+    db_file: str,
+    name: Optional[str],
+    postal_code: Optional[str],
+    country_code: Optional[str],
+    lat: Optional[float],
+    lon: Optional[float],
+    radius: float,
+    debug: bool,
+) -> None:
     """Search for locations in the database."""
+    if debug:
+        logger.remove()
+        logger.add(sys.stderr, level="DEBUG")
+
     db_path = Path(db_file)
 
     if not db_path.exists():
@@ -142,9 +142,8 @@ def search(db_file, name, postal_code, country_code, lat, lon, radius):
 
     click.echo(f"Searching in {db_file}")
     try:
-
-        async def search_wrapper():
-            engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
+        async def search_wrapper() -> List[Dict[str, Any]]:
+            engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=debug)
             try:
                 if not await database.database_exists(engine):
                     click.echo(
@@ -152,15 +151,23 @@ def search(db_file, name, postal_code, country_code, lat, lon, radius):
                     )
                     return []
 
+                logger.debug("Database exists. Proceeding with search.")
+
                 if name:
+                    logger.debug(f"Searching for name: {name}")
                     return await database.search_by_name(engine, name)
                 elif postal_code and country_code:
-                    return await database.search_by_postal_code(
+                    logger.debug(f"Searching for postal code {postal_code} in country {country_code}")
+                    result = await database.search_by_postal_code(
                         engine, country_code, postal_code
                     )
+                    logger.debug(f"Search result: {result}")
+                    return result
                 elif country_code:
+                    logger.debug(f"Searching for country code: {country_code}")
                     return await database.search_by_country_code(engine, country_code)
                 elif lat is not None and lon is not None:
+                    logger.debug(f"Searching by coordinates: lat={lat}, lon={lon}, radius={radius}")
                     return await database.search_by_coordinates(
                         engine, lat, lon, radius
                     )
@@ -180,6 +187,7 @@ def search(db_file, name, postal_code, country_code, lat, lon, radius):
         else:
             click.echo("No results found")
     except Exception as e:
+        logger.exception("Error during search")
         click.echo(f"Error during search: {str(e)}")
         click.echo(
             "If the problem persists, please ensure the database is properly set up and you have the necessary permissions."
@@ -190,7 +198,7 @@ def search(db_file, name, postal_code, country_code, lat, lon, radius):
 @click.option(
     "--db-file", default="data/geonames.db", help="Path to the SQLite database file"
 )
-def stats(db_file):
+def stats(db_file: str) -> None:
     """Display statistics about the database."""
     db_path = Path(db_file)
 
@@ -203,7 +211,7 @@ def stats(db_file):
     click.echo(f"Displaying statistics for {db_file}")
     try:
 
-        async def stats_wrapper():
+        async def stats_wrapper() -> tuple[Optional[int], Optional[int], Optional[list]]:
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
             try:
                 if not await database.database_exists(engine):
