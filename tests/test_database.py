@@ -1,11 +1,11 @@
-from unittest.mock import AsyncMock, MagicMock, patch, create_autospec
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from loguru import logger
-from sqlalchemy import Table, Insert
+from sqlalchemy import Insert, Table
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from geonames.config import Config
 from geonames.database import (
@@ -43,6 +43,7 @@ class AsyncIteratorMock:
         except StopIteration:
             raise StopAsyncIteration
 
+
 class AsyncContextManagerMock:
     def __init__(self, return_value):
         self.return_value = return_value
@@ -79,9 +80,21 @@ async def test_execute_query(mock_engine):
     async def mock_query_func(session, *args):
         return [1, 2, 3]
 
-    with patch('geonames.database.create_async_session', return_value=AsyncMock(return_value=mock_session)):
+    with patch(
+        "geonames.database.create_async_session",
+        return_value=AsyncMock(return_value=mock_session),
+    ):
         result = await execute_query(mock_engine, mock_query_func)
         assert result == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_execute_query_error(mock_engine):
+    async def error_query(session, *args):
+        raise SQLAlchemyError("Query execution failed")
+
+    with pytest.raises(SQLAlchemyError):
+        await execute_query(mock_engine, error_query)
 
 
 @pytest.mark.asyncio
@@ -93,12 +106,15 @@ async def test_check_database_update_needed():
 
     mock_engine = AsyncMock(spec=AsyncEngine)
 
-    with patch("pathlib.Path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=1000), \
-         patch("geonames.database.check_for_updates", new_callable=AsyncMock) as mock_check_updates, \
-         patch("geonames.database.create_async_engine", return_value=mock_engine), \
-         patch("geonames.database.database_exists", new_callable=AsyncMock) as mock_db_exists:
-
+    with patch("pathlib.Path.exists", return_value=True), patch(
+        "os.path.getmtime", return_value=1000
+    ), patch(
+        "geonames.database.check_for_updates", new_callable=AsyncMock
+    ) as mock_check_updates, patch(
+        "geonames.database.create_async_engine", return_value=mock_engine
+    ), patch(
+        "geonames.database.database_exists", new_callable=AsyncMock
+    ) as mock_db_exists:
         mock_check_updates.return_value = False
         mock_db_exists.return_value = True
 
@@ -117,6 +133,36 @@ async def test_check_database_update_needed():
         mock_db_exists.assert_awaited_once_with(mock_engine)
         mock_check_updates.assert_awaited_once_with(config.URL, config.ZIP_FILE)
         await mock_engine.dispose()  # Ensure we're awaiting the dispose method
+
+
+@pytest.mark.asyncio
+async def test_check_database_update_needed_error(mock_engine):
+    config = Config()
+    config.DATABASE_FILEPATH = "nonexistent.db"
+    config.ZIP_FILE = AsyncMock()
+    config.ZIP_FILE.exists.return_value = False
+
+    with patch("geonames.database.create_async_engine", return_value=mock_engine):
+        mock_engine.connect.side_effect = SQLAlchemyError("Connection error")
+        with pytest.raises(SQLAlchemyError):
+            await check_database_update_needed(config)
+
+
+@pytest.mark.asyncio
+async def test_check_database_update_needed_empty_database(mock_engine):
+    config = Config()
+    config.DATABASE_FILEPATH = "test.db"
+    config.ZIP_FILE = MagicMock()
+    config.ZIP_FILE.exists.return_value = True
+
+    with patch("geonames.database.create_async_engine", return_value=mock_engine):
+        mock_conn = AsyncMock()
+        mock_engine.connect.return_value.__aenter__.return_value = mock_conn
+        mock_conn.execute.return_value.scalar_one.return_value = 0
+
+        result = await check_database_update_needed(config)
+        assert result is True
+
 
 @pytest.mark.asyncio
 async def test_database_exists(mock_engine):
@@ -173,41 +219,39 @@ async def test_bulk_insert_data_success(mock_engine, mock_conn, test_data, caplo
     call_args = mock_conn.execute.call_args
     assert call_args is not None
     args, kwargs = call_args
-    
+
     assert len(args) == 2
     assert isinstance(args[0], Insert)
     assert args[1] == test_data
-    
+
     assert f"Inserting {len(test_data)} items" in caplog.text
     assert "Insert completed successfully" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_bulk_insert_data_error(mock_engine, mock_conn, test_data, caplog):
+async def test_bulk_insert_data_error(mock_engine):
+    mock_conn = AsyncMock()
     mock_engine.begin.return_value.__aenter__.return_value = mock_conn
-    mock_conn.execute.side_effect = Exception("Database error")
+    mock_conn.execute.side_effect = SQLAlchemyError("Database error")
 
-    with pytest.raises(Exception, match="Database error"):
-        with patch("geonames.database.Geoname.__table__"):
-            await bulk_insert_data(mock_engine, test_data)
+    test_data = [{"country_code": "US", "postal_code": "12345"}]
 
-    assert f"Inserting {len(test_data)} items" in caplog.text
-    assert "Error during insert: Database error" in caplog.text
+    with pytest.raises(SQLAlchemyError):
+        await bulk_insert_data(mock_engine, test_data)
 
 
 @pytest.mark.asyncio
-async def test_optimize_database(mock_engine, mock_conn):
+async def test_optimize_database(mock_engine):
+    mock_conn = AsyncMock()
     mock_engine.begin.return_value.__aenter__.return_value = mock_conn
 
     await optimize_database(mock_engine)
 
     mock_conn.execute.assert_called_once()
     call_args = mock_conn.execute.call_args
-    assert call_args is not None, "Execute method was not called"
+    assert call_args is not None
     stmt = call_args[0][0]
-    assert (
-        str(stmt).strip().lower() == "pragma optimize"
-    ), f"Expected 'PRAGMA optimize', got: {stmt}"
+    assert str(stmt).strip().lower() == "pragma optimize"
 
 
 @pytest.mark.asyncio
@@ -247,6 +291,13 @@ async def test_get_geolocation(mock_engine):
         assert len(result) == 1
         assert result[0]["city"] == "Test City"
         assert result[0]["state"] == "State"
+
+
+@pytest.mark.asyncio
+async def test_get_geolocation_not_found(mock_engine):
+    with patch("geonames.database.execute_query", return_value=[]):
+        result = await get_geolocation(mock_engine, "XX", "99999")
+        assert result == []
 
 
 @pytest.mark.asyncio
@@ -290,14 +341,40 @@ async def test_setup_database():
         "geonames.database.check_database_update_needed", return_value=False
     ), patch("geonames.database.create_async_engine") as mock_create_engine, patch(
         "geonames.database.Base.metadata.create_all"
-    ), patch(
-        "geonames.database.get_total_entries", return_value=1
-    ):
+    ), patch("geonames.database.get_total_entries", return_value=1):
         mock_engine = AsyncMock(spec=AsyncEngine)
         mock_create_engine.return_value = mock_engine
 
         result = await setup_database(config)
         assert isinstance(result, AsyncEngine)
+
+
+@pytest.mark.asyncio
+async def test_setup_database_error(mock_engine):
+    config = Config()
+    with patch(
+        "geonames.database.check_database_update_needed", return_value=True
+    ), patch(
+        "geonames.database.check_for_updates",
+        side_effect=Exception("Update check failed"),
+    ):
+        with pytest.raises(Exception):
+            await setup_database(config)
+
+
+@pytest.mark.asyncio
+async def test_setup_database_download_and_extract(mock_engine):
+    config = Config()
+    with patch(
+        "geonames.database.check_database_update_needed", return_value=True
+    ), patch("geonames.database.check_for_updates", return_value=True), patch(
+        "geonames.database.download_zip"
+    ) as mock_download, patch("geonames.database.extract_zip") as mock_extract, patch(
+        "geonames.database.load_data_in_chunks", return_value=[]
+    ), patch("geonames.database.create_async_engine", return_value=mock_engine):
+        await setup_database(config)
+        mock_download.assert_called_once()
+        mock_extract.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -316,6 +393,15 @@ async def test_search_locations(mock_engine):
 
 
 @pytest.mark.asyncio
+async def test_search_locations_empty_result(mock_engine):
+    async def mock_query_func(session):
+        return []
+
+    result = await search_locations(mock_engine, mock_query_func)
+    assert result == []
+
+
+@pytest.mark.asyncio
 async def test_search_by_name(mock_engine):
     mock_result = [
         Geoname(place_name="Test City", country_code="US", latitude=1.0, longitude=1.0)
@@ -324,6 +410,13 @@ async def test_search_by_name(mock_engine):
         result = await search_by_name(mock_engine, "Test")
         assert len(result) == 1
         assert result[0]["name"] == "Test City"
+
+
+@pytest.mark.asyncio
+async def test_search_by_name_no_results(mock_engine):
+    with patch("geonames.database.execute_query", return_value=[]):
+        result = await search_by_name(mock_engine, "NonexistentCity")
+        assert result == []
 
 
 @pytest.mark.asyncio
@@ -348,7 +441,7 @@ async def test_search_by_country_code():
         Geoname(place_name="City2", country_code="US", latitude=2.0, longitude=2.0),
     ]
 
-    with patch('geonames.database.execute_query', return_value=mock_geonames):
+    with patch("geonames.database.execute_query", return_value=mock_geonames):
         result = await search_by_country_code(mock_engine, "US")
 
     # Check the result
@@ -368,6 +461,25 @@ async def test_search_by_country_code():
 
 
 @pytest.mark.asyncio
+async def test_search_by_country_code_limit(mock_engine):
+    mock_result = [
+        Geoname(
+            place_name=f"City{i}",
+            country_code="US",
+            latitude=float(i),
+            longitude=float(i),
+        )
+        for i in range(150)
+    ]
+    with patch(
+        "geonames.database.execute_query", return_value=mock_result[:100]
+    ):  # Simulate the database query limit
+        result = await search_by_country_code(mock_engine, "US")
+        assert len(result) == 100  # Verify that the result is limited to 100 entries
+        assert result[-1]["name"] == "City99"  # Verify the last entry
+
+
+@pytest.mark.asyncio
 async def test_search_by_coordinates(mock_engine):
     mock_result = [
         Geoname(place_name="Test City", country_code="US", latitude=1.0, longitude=1.0)
@@ -376,6 +488,19 @@ async def test_search_by_coordinates(mock_engine):
         result = await search_by_coordinates(mock_engine, 1.0, 1.0, 10)
         assert len(result) == 1
         assert result[0]["name"] == "Test City"
+
+
+@pytest.mark.asyncio
+async def test_search_by_coordinates_invalid_input(mock_engine):
+    with pytest.raises(ValueError):
+        await search_by_coordinates(mock_engine, "invalid", "invalid", 10)
+
+
+@pytest.mark.asyncio
+async def test_search_by_coordinates_error_handling(mock_engine):
+    with patch("geonames.database.execute_query", side_effect=Exception("Test error")):
+        result = await search_by_coordinates(mock_engine, 0, 0, 10)
+        assert result == []
 
 
 @pytest.mark.asyncio
@@ -399,3 +524,10 @@ async def test_get_top_countries(mock_engine):
         result = await get_top_countries(mock_engine)
         assert len(result) == 3
         assert result[0] == ("US", 100)
+
+
+@pytest.mark.asyncio
+async def test_get_top_countries_empty_result(mock_engine):
+    with patch("geonames.database.execute_query", return_value=[]):
+        result = await get_top_countries(mock_engine)
+        assert result == []

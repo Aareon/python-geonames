@@ -1,10 +1,8 @@
 import asyncio
-import zipfile
-from pathlib import Path
-from typing import Any, Callable, Optional, List, Dict
 import sys
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-import aiohttp
 import click
 from loguru import logger
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -57,7 +55,9 @@ def import_data(input_file: str, db_file: str, debug: bool) -> None:
                     if await check_for_updates(config.URL, config.ZIP_FILE):
                         await download_zip(config.URL, config.ZIP_FILE)
 
-                    logger.debug(f"Extracting {config.ZIP_FILE} to {config.TXT_FILE.parent}")
+                    logger.debug(
+                        f"Extracting {config.ZIP_FILE} to {config.TXT_FILE.parent}"
+                    )
                     extracted_files = await extract_zip(
                         config.ZIP_FILE, config.TXT_FILE.parent
                     )
@@ -142,6 +142,7 @@ def search(
 
     click.echo(f"Searching in {db_file}")
     try:
+
         async def search_wrapper() -> List[Dict[str, Any]]:
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=debug)
             try:
@@ -157,7 +158,9 @@ def search(
                     logger.debug(f"Searching for name: {name}")
                     return await database.search_by_name(engine, name)
                 elif postal_code and country_code:
-                    logger.debug(f"Searching for postal code {postal_code} in country {country_code}")
+                    logger.debug(
+                        f"Searching for postal code {postal_code} in country {country_code}"
+                    )
                     result = await database.search_by_postal_code(
                         engine, country_code, postal_code
                     )
@@ -167,7 +170,9 @@ def search(
                     logger.debug(f"Searching for country code: {country_code}")
                     return await database.search_by_country_code(engine, country_code)
                 elif lat is not None and lon is not None:
-                    logger.debug(f"Searching by coordinates: lat={lat}, lon={lon}, radius={radius}")
+                    logger.debug(
+                        f"Searching by coordinates: lat={lat}, lon={lon}, radius={radius}"
+                    )
                     return await database.search_by_coordinates(
                         engine, lat, lon, radius
                     )
@@ -179,7 +184,7 @@ def search(
             finally:
                 await engine.dispose()
 
-        results = sync_wrapper(search_wrapper)()
+        results = asyncio.run(search_wrapper())
 
         if results:
             for result in results:
@@ -211,7 +216,9 @@ def stats(db_file: str) -> None:
     click.echo(f"Displaying statistics for {db_file}")
     try:
 
-        async def stats_wrapper() -> tuple[Optional[int], Optional[int], Optional[list]]:
+        async def stats_wrapper() -> (
+            tuple[Optional[int], Optional[int], Optional[list]]
+        ):
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
             try:
                 if not await database.database_exists(engine):

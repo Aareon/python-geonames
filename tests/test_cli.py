@@ -218,7 +218,9 @@ def test_import_data(runner, mock_db_file):
             ],
         )
         assert result.exit_code == 0
-        assert f"Importing data from test_input.txt into {mock_db_file}" in result.output
+        assert (
+            f"Importing data from test_input.txt into {mock_db_file}" in result.output
+        )
         assert "Data import completed successfully." in result.output
         assert "Total entries in database: 1000" in result.output
         assert "Number of countries: 50" in result.output

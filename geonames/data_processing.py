@@ -1,8 +1,8 @@
 from pathlib import Path
-from typing import Any, Dict, List, Generator
+from typing import Any, Dict, Generator, List
+
 import pandas as pd
 from loguru import logger
-import numpy as np
 
 
 def get_column_info() -> Dict[str, Any]:
@@ -21,6 +21,7 @@ def get_column_info() -> Dict[str, Any]:
         "accuracy": float,
     }
 
+
 def load_data_in_chunks(
     txt_filename: Path, chunksize: int = 200000
 ) -> Generator[pd.DataFrame, None, None]:
@@ -33,12 +34,12 @@ def load_data_in_chunks(
     columns = list(column_info.keys())
 
     # Custom converter for float columns
-    float_converter = lambda x: pd.to_numeric(x, errors='coerce')
+    float_converter = lambda x: pd.to_numeric(x, errors="coerce")
 
     converters = {
-        'latitude': float_converter,
-        'longitude': float_converter,
-        'accuracy': float_converter
+        "latitude": float_converter,
+        "longitude": float_converter,
+        "accuracy": float_converter,
     }
 
     dtypes = {col: str for col in columns if col not in converters}
@@ -51,7 +52,7 @@ def load_data_in_chunks(
         dtype=dtypes,
         converters=converters,
         chunksize=chunksize,
-        na_values=[''],
+        na_values=[""],
         keep_default_na=False,
         encoding="utf-8",
         on_bad_lines="skip",
@@ -59,6 +60,7 @@ def load_data_in_chunks(
     ):
         logger.debug(f"Loaded chunk with {len(chunk)} rows")
         yield chunk
+
 
 def process_chunk(chunk: pd.DataFrame) -> List[Dict[str, Any]]:
     logger.debug(f"Processing chunk of size {len(chunk)}")
