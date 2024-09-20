@@ -44,7 +44,7 @@ poetry run pytest
 To format code:
 
 ```
-poetry run black .
+poetry run ruff .
 poetry run isort .
 ```
 
@@ -56,7 +56,4 @@ poetry run mypy .
 
 ## License
 
-This project is licensed under the MIT License.
-```
-
-This completes our comprehensive update of the geonames database package, incorporating best practices, improved performance and modularity, better documentation, testing strategies, update checking, and overall efficiency improvements.
+This project is licensed under the MIT License. The GeoNames data is licensed under a [Creative Commons Attribution 4.0 License](https://creativecommons.org/licenses/by/4.0/).
