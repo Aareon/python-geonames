@@ -98,7 +98,8 @@ def import_data(input_file: str, db_file: str, debug: bool) -> None:
         asyncio.run(import_data_async())
     except Exception as e:
         logger.exception("Error during data import")
-        click.echo(f"Error during data import: {str(e)}")
+        click.echo(f"Error during data import: {str(e)}", err=True)
+        sys.exit(1)
 
 
 @cli.command()
@@ -136,21 +137,22 @@ def search(
 
     if not db_path.exists():
         click.echo(
-            f"Database file not found at {db_path}. Please run the import-data command first."
+            f"Database file not found at {db_path}. Please run the import-data command first.",
+            err=True
         )
-        return
+        sys.exit(1)
 
     click.echo(f"Searching in {db_file}")
     try:
-
         async def search_wrapper() -> List[Dict[str, Any]]:
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=debug)
             try:
                 if not await database.database_exists(engine):
                     click.echo(
-                        "Database tables not found. Please run the import-data command first."
+                        "Database tables not found. Please run the import-data command first.",
+                        err=True
                     )
-                    return []
+                    sys.exit(1)
 
                 logger.debug("Database exists. Proceeding with search.")
 
@@ -173,14 +175,13 @@ def search(
                     logger.debug(
                         f"Searching by coordinates: lat={lat}, lon={lon}, radius={radius}"
                     )
-                    return await database.search_by_coordinates(
-                        engine, lat, lon, radius
-                    )
+                    return await database.search_by_coordinates(engine, lat, lon, radius)
                 else:
                     click.echo(
-                        "Please provide a search criteria: --name, --postal-code and --country-code, --country-code, or --lat and --lon"
+                        "Please provide a search criteria: --name, --postal-code and --country-code, --country-code, or --lat and --lon",
+                        err=True
                     )
-                    return []
+                    sys.exit(1)
             finally:
                 await engine.dispose()
 
@@ -193,10 +194,12 @@ def search(
             click.echo("No results found")
     except Exception as e:
         logger.exception("Error during search")
-        click.echo(f"Error during search: {str(e)}")
+        click.echo(f"Error during search: {str(e)}", err=True)
         click.echo(
-            "If the problem persists, please ensure the database is properly set up and you have the necessary permissions."
+            "If the problem persists, please ensure the database is properly set up and you have the necessary permissions.",
+            err=True
         )
+        sys.exit(1)
 
 
 @cli.command()
@@ -209,23 +212,22 @@ def stats(db_file: str) -> None:
 
     if not db_path.exists():
         click.echo(
-            f"Database file not found at {db_path}. Please run the import-data command first."
+            f"Database file not found at {db_path}. Please run the import-data command first.",
+            err=True
         )
-        return
+        sys.exit(1)
 
     click.echo(f"Displaying statistics for {db_file}")
     try:
-
-        async def stats_wrapper() -> (
-            tuple[Optional[int], Optional[int], Optional[list]]
-        ):
+        async def stats_wrapper() -> tuple[Optional[int], Optional[int], Optional[list]]:
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
             try:
                 if not await database.database_exists(engine):
                     click.echo(
-                        "Database tables not found. Please run the import-data command first."
+                        "Database tables not found. Please run the import-data command first.",
+                        err=True
                     )
-                    return None, None, None
+                    sys.exit(1)
 
                 total_entries = await database.get_total_entries(engine)
                 country_count = await database.get_country_count(engine)
@@ -234,23 +236,24 @@ def stats(db_file: str) -> None:
             finally:
                 await engine.dispose()
 
-        total_entries, country_count, top_5_countries = sync_wrapper(stats_wrapper)()
+        total_entries, country_count, top_5_countries = asyncio.run(stats_wrapper())
 
         if total_entries is not None:
             click.echo(f"Total entries: {total_entries}")
             click.echo(f"Number of countries: {country_count}")
             click.echo("Top 5 countries by number of entries:")
-            for country, count in top_5_countries:
-                click.echo(f"  {country}: {count}")
-        else:
-            click.echo(
-                "Unable to retrieve statistics. Please ensure the database is properly set up."
-            )
+            if top_5_countries:
+                for country, count in top_5_countries:
+                    click.echo(f"  {country}: {count}")
+            else:
+                click.echo("No data available")
     except Exception as e:
-        click.echo(f"Error retrieving statistics: {str(e)}")
+        click.echo(f"Error retrieving statistics: {str(e)}", err=True)
         click.echo(
-            "If the problem persists, please ensure the database is properly set up and you have the necessary permissions."
+            "If the problem persists, please ensure the database is properly set up and you have the necessary permissions.",
+            err=True
         )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

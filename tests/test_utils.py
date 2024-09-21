@@ -1,13 +1,13 @@
 import io
 import zipfile
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from aiohttp import web
+from aiohttp import ClientResponseError, web
 from aioresponses import aioresponses
 
-from geonames.config import Config
 from geonames.utils import check_for_updates, download_zip, extract_zip
 
 
@@ -28,29 +28,30 @@ async def zip_server(aiohttp_server):
 
 
 @pytest.mark.asyncio
-async def test_download_zip(zip_server):
+async def test_download_zip(zip_server, tmp_path):
     url = f"http://localhost:{zip_server.port}/test.zip"
+    test_file = tmp_path / "test.zip"
+
+    await download_zip(url, test_file)
+
+    assert test_file.exists(), "The downloaded zip file does not exist"
+    with zipfile.ZipFile(test_file, "r") as zip_ref:
+        assert "test.txt" in zip_ref.namelist(), "'test.txt' not found in the zip file"
+        with zip_ref.open("test.txt") as zip_file:
+            content = zip_file.read().decode("utf-8").strip()
+            assert content == "This is a test file inside a zip archive."
+
+
+@pytest.mark.asyncio
+async def test_download_zip_network_error():
+    url = "https://example.com/nonexistent.zip"
     test_file = Path("test.zip")
 
-    try:
-        await download_zip(url, test_file)
+    with aioresponses() as m:
+        m.get(url, exception=ClientResponseError(None, None, status=404))
 
-        assert test_file.exists(), "The downloaded zip file does not exist"
-
-        with zipfile.ZipFile(test_file, "r") as zip_ref:
-            file_list = zip_ref.namelist()
-            assert "test.txt" in file_list, "'test.txt' not found in the zip file"
-
-            expected_content = "This is a test file inside a zip archive."
-            with zip_ref.open("test.txt") as zip_file:
-                content = zip_file.read().decode("utf-8").strip()
-                assert (
-                    content == expected_content
-                ), "File content does not match expected content"
-
-    finally:
-        if test_file.exists():
-            test_file.unlink()
+        with pytest.raises(ClientResponseError):
+            await download_zip(url, test_file)
 
 
 @pytest.mark.asyncio
@@ -65,57 +66,97 @@ async def test_download_zip_403_error():
 
 
 @pytest.mark.asyncio
-async def test_check_for_updates(mocker):
-    config = Config()
-    url = config.URL
-    zip_file = config.ZIP_FILE
+async def test_extract_zip(tmp_path):
+    zip_path = tmp_path / "test.zip"
+    extract_dir = tmp_path / "extracted"
 
-    # Mock the file system
-    mock_stat = mocker.Mock()
-    mock_stat.st_size = 900
-    mock_stat.st_mtime = datetime(2015, 10, 21, 7, 28, tzinfo=timezone.utc).timestamp()
-    mocker.patch("pathlib.Path.stat", return_value=mock_stat)
-    mocker.patch("pathlib.Path.exists", return_value=True)
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("test1.txt", "Test content 1")
+        zf.writestr("test2.txt", "Test content 2")
 
-    with aioresponses() as m:
-        # Mock the HTTP response for both calls
-        m.head(
-            url,
-            status=200,
-            headers={
-                "Content-Length": "1000",
-                "Last-Modified": "Wed, 21 Oct 2015 07:29:00 GMT",
-            },
-            repeat=True,
-        )
+    extracted_files = await extract_zip(zip_path, extract_dir)
 
-        # Test when update is needed
-        result = await check_for_updates(url, zip_file)
-        assert result == True, "Expected an update to be needed"
-
-        # Test when file is up to date
-        mock_stat.st_size = 1000
-        mock_stat.st_mtime = datetime(
-            2015, 10, 21, 7, 29, tzinfo=timezone.utc
-        ).timestamp()
-        result = await check_for_updates(url, zip_file)
-        assert result == False, "Expected no update to be needed"
+    assert len(extracted_files) == 2
+    assert "test1.txt" in extracted_files
+    assert "test2.txt" in extracted_files
+    assert (extract_dir / "test1.txt").read_text() == "Test content 1"
+    assert (extract_dir / "test2.txt").read_text() == "Test content 2"
 
 
 @pytest.mark.asyncio
-async def test_extract_zip(tmp_path):
-    # Create a test zip file
-    zip_path = tmp_path / "test.zip"
-    with zipfile.ZipFile(zip_path, "w") as zf:
-        zf.writestr("test.txt", "Test content")
+async def test_extract_zip_invalid_zip(tmp_path):
+    invalid_zip = tmp_path / "invalid.zip"
+    invalid_zip.write_bytes(b"This is not a valid zip file")
 
-    # Extract the zip file
-    extract_dir = tmp_path / "extracted"
-    await extract_zip(zip_path, extract_dir)
+    with pytest.raises(zipfile.BadZipFile):
+        await extract_zip(invalid_zip, tmp_path / "extracted")
 
-    # Check if the file was extracted correctly
-    extracted_file = extract_dir / "test.txt"
-    assert extracted_file.exists(), "Extracted file does not exist"
-    assert (
-        extracted_file.read_text() == "Test content"
-    ), "Extracted content does not match"
+
+@pytest.mark.asyncio
+async def test_extract_zip_empty_zip(tmp_path):
+    empty_zip = tmp_path / "empty.zip"
+    with zipfile.ZipFile(empty_zip, "w"):
+        pass
+
+    with pytest.raises(FileNotFoundError, match="No files were extracted"):
+        await extract_zip(empty_zip, tmp_path / "extracted")
+
+
+@pytest.mark.asyncio
+async def test_check_for_updates_file_not_exists(tmp_path):
+    url = "https://example.com/test.zip"
+    current_file = tmp_path / "nonexistent.zip"
+
+    assert await check_for_updates(url, current_file) == True
+
+
+@pytest.mark.asyncio
+async def test_check_for_updates_different_size(tmp_path):
+    url = "https://example.com/test.zip"
+    current_file = tmp_path / "test.zip"
+    current_file.write_bytes(b"small content")
+
+    with aioresponses() as m:
+        m.head(url, headers={"Content-Length": "1000"})
+        assert await check_for_updates(url, current_file) == True
+
+
+@pytest.mark.asyncio
+async def test_check_for_updates_newer_remote_file(tmp_path):
+    url = "https://example.com/test.zip"
+    current_file = tmp_path / "test.zip"
+    current_file.write_bytes(b"test content")
+
+    old_time = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    os.utime(current_file, (old_time.timestamp(), old_time.timestamp()))
+
+    new_time = datetime(2021, 1, 1, tzinfo=timezone.utc)
+    with aioresponses() as m:
+        m.head(
+            url,
+            headers={
+                "Content-Length": str(len(b"test content")),
+                "Last-Modified": new_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            },
+        )
+        assert await check_for_updates(url, current_file) == True
+
+
+@pytest.mark.asyncio
+async def test_check_for_updates_no_update_needed(tmp_path):
+    url = "https://example.com/test.zip"
+    current_file = tmp_path / "test.zip"
+    current_file.write_bytes(b"test content")
+
+    current_time = datetime.now(timezone.utc)
+    os.utime(current_file, (current_time.timestamp(), current_time.timestamp()))
+
+    with aioresponses() as m:
+        m.head(
+            url,
+            headers={
+                "Content-Length": str(len(b"test content")),
+                "Last-Modified": current_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
+            },
+        )
+        assert await check_for_updates(url, current_file) == False
