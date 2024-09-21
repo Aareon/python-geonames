@@ -146,7 +146,7 @@ async def check_database_update_needed(config: Config) -> bool:
 
         async with engine.connect() as conn:
             result = await conn.execute(text("SELECT COUNT(*) FROM geonames"))
-            count = await result.scalar_one()
+            count = result.scalar_one()
             if count == 0:
                 logger.debug("Database is empty. Update needed.")
                 return True
