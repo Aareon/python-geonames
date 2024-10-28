@@ -1,8 +1,11 @@
 import asyncio
+
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
-from geonames.database import get_geolocation, setup_database
+
 from geonames.config import Config as GeoNamesConfig
+from geonames.database import get_geolocation, setup_database
+
 
 async def safe_get_geolocation(engine, country, postal_code):
     try:
@@ -10,6 +13,7 @@ async def safe_get_geolocation(engine, country, postal_code):
     except SQLAlchemyError as e:
         logger.error(f"Database error occurred: {e}")
         return None
+
 
 async def main():
     config = GeoNamesConfig()
@@ -22,6 +26,7 @@ async def main():
             logger.warning("No results found or an error occurred.")
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

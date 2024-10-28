@@ -145,7 +145,7 @@ def search(
     if not db_path.exists():
         click.echo(
             f"Database file not found at {db_path}. Please run the import-data command first.",
-            err=True
+            err=True,
         )
         sys.exit(1)
 
@@ -155,13 +155,14 @@ def search(
 
     click.echo(f"Searching in {db_file}")
     try:
+
         async def search_wrapper() -> List[Dict[str, Any]]:
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=debug)
             try:
                 if not await database.database_exists(engine):
                     click.echo(
                         "Database tables not found. Please run the import-data command first.",
-                        err=True
+                        err=True,
                     )
                     sys.exit(1)
 
@@ -176,7 +177,9 @@ def search(
                     )
                     # Add debug database check when in debug mode
                     if debug:
-                        await database.debug_database_content(engine, country_code, postal_code)
+                        await database.debug_database_content(
+                            engine, country_code, postal_code
+                        )
                     result = await database.search_by_postal_code(
                         engine, country_code, postal_code
                     )
@@ -199,7 +202,7 @@ def search(
                     click.echo(
                         "Please provide a search criteria: --name, --postal-code and --country-code, "
                         "--country-code, or --lat and --lon",
-                        err=True
+                        err=True,
                     )
                     sys.exit(1)
             finally:
@@ -215,19 +218,16 @@ def search(
             if debug:
                 click.echo(
                     "Try running the import-data command first to ensure the database is populated:",
-                    err=True
+                    err=True,
                 )
-                click.echo(
-                    "  geonames-cli import-data --debug",
-                    err=True
-                )
+                click.echo("  geonames-cli import-data --debug", err=True)
     except Exception as e:
         logger.exception("Error during search")
         click.echo(f"Error during search: {str(e)}", err=True)
         click.echo(
             "If the problem persists, please ensure the database is properly set up "
             "and you have the necessary permissions.",
-            err=True
+            err=True,
         )
         sys.exit(1)
 
@@ -243,19 +243,22 @@ def stats(db_file: str) -> None:
     if not db_path.exists():
         click.echo(
             f"Database file not found at {db_path}. Please run the import-data command first.",
-            err=True
+            err=True,
         )
         sys.exit(1)
 
     click.echo(f"Displaying statistics for {db_file}")
     try:
-        async def stats_wrapper() -> tuple[Optional[int], Optional[int], Optional[list]]:
+
+        async def stats_wrapper() -> (
+            tuple[Optional[int], Optional[int], Optional[list]]
+        ):
             engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
             try:
                 if not await database.database_exists(engine):
                     click.echo(
                         "Database tables not found. Please run the import-data command first.",
-                        err=True
+                        err=True,
                     )
                     sys.exit(1)
 
@@ -281,7 +284,7 @@ def stats(db_file: str) -> None:
         click.echo(f"Error retrieving statistics: {str(e)}", err=True)
         click.echo(
             "If the problem persists, please ensure the database is properly set up and you have the necessary permissions.",
-            err=True
+            err=True,
         )
         sys.exit(1)
 
