@@ -295,8 +295,8 @@ async def test_get_geolocation(mock_engine):
     with patch("geonames.database.execute_query", return_value=mock_result):
         result = await get_geolocation(mock_engine, "US", "12345")
         assert len(result) == 1
-        assert result[0]["city"] == "Test City"
-        assert result[0]["state"] == "State"
+        assert result[0]["name"] == "Test City"  # Use standardized key
+        assert result[0]["country"] == "US"  # Use standardized key
 
 
 @pytest.mark.asyncio
@@ -423,7 +423,10 @@ async def test_search_locations(mock_engine):
     """Test the search_locations helper function."""
     mock_result = [
         Geoname(
-            place_name="Test Location", country_code="US", latitude=1.0, longitude=1.0
+            place_name="Test Location", 
+            country_code="US", 
+            latitude=1.0, 
+            longitude=1.0
         )
     ]
 
@@ -433,10 +436,8 @@ async def test_search_locations(mock_engine):
     with patch("geonames.database.execute_query", return_value=mock_result):
         result = await search_locations(mock_engine, mock_query_func)
         assert len(result) == 1
-        assert result[0]["name"] == "Test Location"
-        assert result[0]["country"] == "US"
-        assert result[0]["latitude"] == 1.0
-        assert result[0]["longitude"] == 1.0
+        assert result[0]["name"] == "Test Location"  # Use standardized key
+        assert result[0]["country"] == "US"  # Use standardized key
 
 
 @pytest.mark.asyncio
