@@ -117,6 +117,12 @@ def import_data(input_file: str, db_file: str, debug: bool) -> None:
     default=10.0,
     help="Search radius in km for coordinate search",
 )
+@click.option(
+    "--num-results",
+    type=int,
+    default=100,
+    help="Maximum number of results to return",
+)
 @click.option("--debug", is_flag=True, help="Enable debug logging")
 def search(
     db_file: str,
@@ -126,6 +132,7 @@ def search(
     lat: Optional[float],
     lon: Optional[float],
     radius: float,
+    num_results: int,
     debug: bool,
 ) -> None:
     """Search for locations in the database."""
@@ -140,6 +147,10 @@ def search(
             f"Database file not found at {db_path}. Please run the import-data command first.",
             err=True
         )
+        sys.exit(1)
+
+    if num_results <= 0:
+        click.echo("Number of results must be greater than 0", err=True)
         sys.exit(1)
 
     click.echo(f"Searching in {db_file}")
@@ -161,8 +172,11 @@ def search(
                     return await database.search_by_name(engine, name)
                 elif postal_code and country_code:
                     logger.debug(
-                        f"Searching for postal code {postal_code} in country {country_code}"
+                        f"Searching for postal code '{postal_code}' in country '{country_code}'"
                     )
+                    # Add debug database check when in debug mode
+                    if debug:
+                        await database.debug_database_content(engine, country_code, postal_code)
                     result = await database.search_by_postal_code(
                         engine, country_code, postal_code
                     )
@@ -170,15 +184,21 @@ def search(
                     return result
                 elif country_code:
                     logger.debug(f"Searching for country code: {country_code}")
-                    return await database.search_by_country_code(engine, country_code)
+                    return await database.search_by_country_code(
+                        engine, country_code, limit=num_results
+                    )
                 elif lat is not None and lon is not None:
                     logger.debug(
-                        f"Searching by coordinates: lat={lat}, lon={lon}, radius={radius}"
+                        f"Searching by coordinates: lat={lat}, lon={lon}, "
+                        f"radius={radius}, limit={num_results}"
                     )
-                    return await database.search_by_coordinates(engine, lat, lon, radius)
+                    return await database.search_by_coordinates(
+                        engine, lat, lon, radius, limit=num_results
+                    )
                 else:
                     click.echo(
-                        "Please provide a search criteria: --name, --postal-code and --country-code, --country-code, or --lat and --lon",
+                        "Please provide a search criteria: --name, --postal-code and --country-code, "
+                        "--country-code, or --lat and --lon",
                         err=True
                     )
                     sys.exit(1)
@@ -192,11 +212,21 @@ def search(
                 click.echo(f"Found: {result}")
         else:
             click.echo("No results found")
+            if debug:
+                click.echo(
+                    "Try running the import-data command first to ensure the database is populated:",
+                    err=True
+                )
+                click.echo(
+                    "  geonames-cli import-data --debug",
+                    err=True
+                )
     except Exception as e:
         logger.exception("Error during search")
         click.echo(f"Error during search: {str(e)}", err=True)
         click.echo(
-            "If the problem persists, please ensure the database is properly set up and you have the necessary permissions.",
+            "If the problem persists, please ensure the database is properly set up "
+            "and you have the necessary permissions.",
             err=True
         )
         sys.exit(1)
