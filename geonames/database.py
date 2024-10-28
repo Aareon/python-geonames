@@ -112,16 +112,16 @@ async def execute_query(
     """
     async with await create_async_session(engine) as session:
         try:
-            # Check if `query_func` expects two parameters: session and a tuple of args
+            # Inspect the query_func to determine if it accepts args as a tuple or separate parameters
             sig = inspect.signature(query_func)
             param_count = len(sig.parameters)
 
-            # Pass as tuple if only two parameters (session, args)
             if param_count == 2:
+                # If query_func expects a tuple for args, pass args as a single tuple
                 logger.debug(f"Executing query function with args as tuple: {args}")
                 result = await query_func(session, args)
             else:
-                # Otherwise, unpack `args` for query functions expecting separate parameters
+                # Unpack args for functions expecting individual arguments
                 logger.debug(f"Executing query function with unpacked args: {args}")
                 result = await query_func(session, *args)
 
@@ -179,18 +179,19 @@ async def get_geolocation(
     zipcode: str
 ) -> List[Dict[str, Any]]:
     """Get geolocation data for a postal code."""
-    async def query(session: AsyncSession, args: Tuple[str, str]) -> List[Geoname]:
-        c, z = args
+    
+    async def query(session: AsyncSession, country: str, postal: str) -> List[Geoname]:
         result = await session.execute(
             select(Geoname).where(
-                and_(Geoname.postal_code == z, Geoname.country_code == c)
+                and_(Geoname.postal_code == postal, Geoname.country_code == country)
             )
         )
         return list(result.scalars().all())
 
     try:
+        # Pass country and zipcode as separate arguments
         geonames: List[Geoname] = await execute_query(
-            engine, query, (country.strip().upper(), zipcode.strip())
+            engine, query, country.strip().upper(), zipcode.strip()
         )
         results = [_format_detailed_result(geoname) for geoname in geonames]
         logger.debug(f"Processed {len(results)} results")
