@@ -55,20 +55,15 @@ def _format_detailed_result(geoname: Geoname) -> Dict[str, Any]:
 
 def _format_search_result(geoname: Geoname) -> Dict[str, Any]:
     """
-    Format a Geoname object into a standardized search result dictionary.
+    Format a Geoname object into a standardized search result dictionary with detailed information.
     
     Args:
         geoname: The Geoname object to format
         
     Returns:
-        Dictionary with standardized location fields
+        Dictionary with standardized location fields and additional details
     """
-    return {
-        "name": geoname.place_name,  # Standardize on "name" for place name
-        "country": geoname.country_code,  # Standardize on "country" for country code
-        "latitude": geoname.latitude,
-        "longitude": geoname.longitude,
-    }
+    return _format_detailed_result(geoname)
 
 
 async def database_exists(engine: AsyncEngine) -> bool:
