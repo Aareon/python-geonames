@@ -1,10 +1,11 @@
 import os
 from datetime import datetime, timezone
-from math import cos, radians
-from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
 
+from typing import Any, Callable, Coroutine, Dict, List, Protocol, Tuple, TypeVar
 from loguru import logger
-from sqlalchemy import and_, func, insert, inspect, select, text
+import inspect
+from sqlalchemy import and_, func, insert, select, text
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -86,7 +87,7 @@ async def database_exists(engine: AsyncEngine) -> bool:
     try:
         async with engine.connect() as conn:
             return await conn.run_sync(
-                lambda sync_conn: inspect(sync_conn).has_table("geonames")
+                lambda sync_conn: sa_inspect(sync_conn).has_table("geonames")
             )
     except SQLAlchemyError as e:
         logger.error(f"Error checking database existence: {e}")
@@ -116,8 +117,19 @@ async def execute_query(
     """
     async with await create_async_session(engine) as session:
         try:
-            logger.debug(f"Executing query function with args: {args}")
-            result = await query_func(session, *args)
+            # Check if `query_func` expects two parameters: session and a tuple of args
+            sig = inspect.signature(query_func)
+            param_count = len(sig.parameters)
+
+            # Pass as tuple if only two parameters (session, args)
+            if param_count == 2:
+                logger.debug(f"Executing query function with args as tuple: {args}")
+                result = await query_func(session, args)
+            else:
+                # Otherwise, unpack `args` for query functions expecting separate parameters
+                logger.debug(f"Executing query function with unpacked args: {args}")
+                result = await query_func(session, *args)
+
             logger.debug(f"Query execution completed. Result type: {type(result)}")
             return result
         except Exception as e:
@@ -405,7 +417,7 @@ async def search_by_country_code(
 
 
 async def search_by_coordinates(
-    engine: AsyncEngine, 
+    engine: AsyncEngine,  # Accept AsyncEngine instead of AsyncSession for consistency
     lat: float, 
     lon: float, 
     radius: float, 
@@ -423,22 +435,12 @@ async def search_by_coordinates(
         
     Returns:
         List of matching locations
-        
-    Raises:
-        ValueError: If radius is not positive
     """
     try:
-        lat = float(lat)
-        lon = float(lon)
-        radius = float(radius)
-        
         if radius <= 0:
             raise ValueError("Radius must be positive")
-            
-        async def query(
-            session: AsyncSession, 
-            args: Tuple[float, float, float, int]
-        ) -> List[Geoname]:
+        
+        async def query(session: AsyncSession, args: Tuple[float, float, float, int]) -> List[Geoname]:
             lat, lon, radius, limit = args
             result = await session.execute(
                 select(Geoname)
@@ -454,8 +456,10 @@ async def search_by_coordinates(
                 .limit(limit)
             )
             return list(result.scalars().all())
-
+        
+        # Execute the query with provided arguments
         return await search_locations(engine, query, lat, lon, radius, limit)
+
     except ValueError as e:
         logger.error(f"Invalid input: {str(e)}")
         raise
